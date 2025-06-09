@@ -1,5 +1,6 @@
 import java.util.*;
 import java.io.*;
+import java.nio.file.*;
 
 /**
  * Major steps
@@ -127,16 +128,44 @@ public class ChristofidesAlgorithm {
     /*───────────────────────────┐
      │  Demo                     │
      └───────────────────────────*/
-    public static void main(String[] a) throws IOException{
-        double[][] dist=readTSPLIB("data/kz9976.tsp");
-        ChristofidesAlgorithm c=new ChristofidesAlgorithm(dist);
+    public static void main(String[] args) throws Exception {
+        if (args.length == 0) {
+            System.err.println("사용법: java -cp . ChristofidesRunner <TSPLIB 파일>");
+            return;
+        }
+
+        Path inPath = Paths.get(args[0]);
+        String fileName = inPath.getFileName().toString();
+        int dot = fileName.lastIndexOf('.');
+        String stem = (dot == -1) ? fileName : fileName.substring(0, dot);
+
+        double[][] dist = ChristofidesAlgorithm.readTSPLIB(inPath.toString());
+        ChristofidesAlgorithm solver = new ChristofidesAlgorithm(dist);
 
         long t0 = System.nanoTime();
-        List<Integer> tour=c.solve();
+        List<Integer> tour = solver.solve();        // 투어 구하고
         long t1 = System.nanoTime();
 
-        System.out.printf("Time: %.3f ms%n", (t1 - t0) / 1e6);
-        System.out.println("Tour: "+tour); System.out.println("Cost: "+c.tourCost(tour)); }
+        double cost = solver.tourCost(tour);        // 비용 계산
+        double ms   = (t1 - t0) / 1e6;
+
+        // 콘솔 출력 — 눈으로 바로 확인
+        System.out.println("Tour  : " + tour);
+        System.out.printf ("Cost  : %.3f%n", cost);
+        System.out.printf ("Time  : %.3f ms%n", ms);
+
+        // 결과 폴더와 파일(누적)
+        Path outDir  = Paths.get("result");
+        Files.createDirectories(outDir);
+        Path outFile = outDir.resolve(stem + "_time.txt");
+
+        try (var w = Files.newBufferedWriter(
+                outFile,
+                StandardOpenOption.CREATE,
+                StandardOpenOption.APPEND)) {
+            w.write(String.format("%.3f%n", ms));   // 시간만 한 줄 추가
+        }
+    }
 
     /*──────────────────────────────────────────────┐
      │  Weighted Blossom (O(N³)) – full version     │
@@ -308,7 +337,6 @@ public class ChristofidesAlgorithm {
                     default -> {}                     // unreached
                 }
             }
-            System.out.printf("delta(raw) = %.17g%n", delta);
             if (delta < EPS) {
                 // 수치 오류나 δ 종류 누락이 의심될 때 강제 중단
                 throw new IllegalStateException("δ collapsed to zero; check dualAdjust()");
@@ -330,7 +358,6 @@ public class ChristofidesAlgorithm {
                     }
                 }
                 if (!progress) {
-                    System.out.println("Adjusting dual variables...");
                     dualAdjust();
                 }
             }
