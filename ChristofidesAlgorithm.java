@@ -25,26 +25,55 @@ public class ChristofidesAlgorithm {
      │  Instance fields           │
      └────────────────────────────*/
     private final int n;               // total vertices
-    private final double[][] dist;     // metric distances (symmetric)
+    private final double[][] coord;     // metric distances (symmetric)
     private final List<List<Integer>> adj; // multigraph adjacency (duplicates allowed)
 
-    public ChristofidesAlgorithm(double[][] dist){
-        this.n=dist.length; this.dist=dist;
-        this.adj=new ArrayList<>(n);
-        for(int i=0;i<n;i++)adj.add(new ArrayList<>());
+    public ChristofidesAlgorithm(double[][] coord){
+        this.n = coord.length;
+        this.coord = coord;
+        this.adj = new ArrayList<>(n);
+        for (int i = 0; i < n; i++) adj.add(new ArrayList<>());
+    }
+
+    private double dist(int i, int j){
+        if (i == j) return 0;
+        double dx = coord[i][0] - coord[j][0];
+        double dy = coord[i][1] - coord[j][1];
+        return Math.hypot(dx, dy);
     }
 
     /*────────────────────────────┐
-     │ 1. Minimum‑spanning tree   │
+     │ 1. Minimum-spanning tree   │
      └────────────────────────────*/
     private void buildMST(){
-        List<Edge> E=new ArrayList<>();
-        for(int i=0;i<n;i++)for(int j=i+1;j<n;j++)E.add(new Edge(i,j,dist[i][j]));
-        Collections.sort(E);
-        UnionFind uf=new UnionFind(n);
-        for(Edge e:E) if(uf.u(e.u,e.v)) addEdge(e.u,e.v);
-    }
+        // Prim (dense, O(n²) 메모리 O(n))
+        boolean[] in = new boolean[n];        // MST 포함 여부
+        double[]  key = new double[n];        // 현재 가장 가까운 거리
+        int[]     parent = new int[n];        // 연결될 정점
 
+        Arrays.fill(key, Double.POSITIVE_INFINITY);
+        key[0] = 0; parent[0] = -1;            // 시작 정점 0
+
+        for (int cnt = 0; cnt < n; cnt++){
+            // ① key 최소인 아직-미포함 정점 u 찾기 (O(n))
+            int u = -1;
+            double best = Double.POSITIVE_INFINITY;
+            for (int v = 0; v < n; v++)
+                if (!in[v] && key[v] < best){ best = key[v]; u = v; }
+
+            in[u] = true;
+            if (parent[u] != -1) addEdge(u, parent[u]);   // MST 간선 추가
+
+            // ② u를 통해 이웃 정점 거리 갱신
+            for (int v = 0; v < n; v++) if (!in[v]){
+                double d = dist(u, v);        // ← 온-더-플라이 거리 계산
+                if (d < key[v]){
+                    key[v] = d;
+                    parent[v] = u;
+                }
+            }
+        }
+    }
     /*────────────────────────────┐
      │ 2. Odd‑degree vertices     │
      └────────────────────────────*/
@@ -58,14 +87,23 @@ public class ChristofidesAlgorithm {
      │ 3. MWPM via Blossom        │
      └────────────────────────────*/
     private void perfectMatching(List<Integer> odd){
-        if(odd.isEmpty()) return;
-        int k=odd.size();
-        double[][] w=new double[k][k];
-        for(int i=0;i<k;i++)for(int j=0;j<k;j++) w[i][j]=dist[odd.get(i)][odd.get(j)];
-        WeightedBlossom wb=new WeightedBlossom(w);
-        int[] mate=wb.solve(); // mate[i] = index of matched vertex for i (in odd list)
-        boolean[] done=new boolean[k];
-        for(int i=0;i<k;i++) if(!done[i]){int j=mate[i];addEdge(odd.get(i),odd.get(j));done[i]=done[j]=true;}
+        if (odd.isEmpty()) return;
+        int k = odd.size();
+        if ((k & 1) == 1) throw new IllegalStateException("odd set size must be even");
+    
+        // ── Blossom에 on-the-fly 거리 함수 넘기기 ──
+        WeightedBlossom wb = new WeightedBlossom(
+            k,
+            (i, j) -> dist(odd.get(i), odd.get(j))     // lambda = WeightFn
+        );
+    
+        int[] mate = wb.solve();
+        boolean[] done = new boolean[k];
+        for (int i = 0; i < k; i++) if (!done[i]){
+            int j = mate[i];
+            addEdge(odd.get(i), odd.get(j));
+            done[i] = done[j] = true;
+        }
     }
 
     /*────────────────────────────┐
@@ -100,29 +138,36 @@ public class ChristofidesAlgorithm {
         perfectMatching(odd);
         return shortcut(euler());
     }
-    public double tourCost(List<Integer> tour){ double c=0; for(int i=0;i<tour.size()-1;i++) c+=dist[tour.get(i)][tour.get(i+1)]; return c; }
+    
+    public double tourCost(List<Integer> tour){
+        double c = 0;
+        for (int i = 0; i < tour.size() - 1; i++)
+            c += dist(tour.get(i), tour.get(i + 1));   // ⟵ 여기만 교체
+        return c;
+    }
 
     /*────────────────────────────┐
      │  TSPLIB (EUCLIDEAN 2‑D)    │
      └────────────────────────────*/
     public static double[][] readTSPLIB(String file) throws IOException{
-        try(BufferedReader br=new BufferedReader(new FileReader(file))){
-            String line; int dim=0; List<double[]> pts=new ArrayList<>(); boolean read=false;
-            while((line=br.readLine())!=null){
-                line=line.trim();
-                if(line.startsWith("DIMENSION")) dim=Integer.parseInt(line.split(":")[1].trim());
-                else if(line.equals("NODE_COORD_SECTION")) read=true;
-                else if(line.equals("EOF")) break;
-                else if(read && !line.isEmpty()){
-                    String[] p=line.split("\\s+"); int id=Integer.parseInt(p[0])-1;
-                    while(pts.size()<=id) pts.add(null);
-                    pts.set(id,new double[]{Double.parseDouble(p[1]),Double.parseDouble(p[2])});
+        try (BufferedReader br = new BufferedReader(new FileReader(file))) {
+            String line; int dim = 0; List<double[]> pts = new ArrayList<>(); boolean read = false;
+            while ((line = br.readLine()) != null){
+                line = line.trim();
+                if (line.startsWith("DIMENSION")) dim = Integer.parseInt(line.split(":")[1].trim());
+                else if (line.equals("NODE_COORD_SECTION")) read = true;
+                else if (line.equals("EOF")) break;
+                else if (read && !line.isEmpty()){
+                    String[] p = line.split("\\s+");
+                    int id = Integer.parseInt(p[0]) - 1;
+                    while (pts.size() <= id) pts.add(null);
+                    pts.set(id, new double[]{Double.parseDouble(p[1]), Double.parseDouble(p[2])});
                 }
             }
-            if(dim==0||pts.size()!=dim) throw new IllegalArgumentException("Invalid TSPLIB file");
-            double[][] d=new double[dim][dim];
-            for(int i=0;i<dim;i++) for(int j=0;j<dim;j++) d[i][j]=(i==j?0:Math.hypot(pts.get(i)[0]-pts.get(j)[0],pts.get(i)[1]-pts.get(j)[1]));
-            return d; }
+            if (dim == 0 || pts.size() != dim)
+                throw new IllegalArgumentException("Invalid TSPLIB file");
+            return pts.toArray(new double[dim][2]);   // ⟵ 좌표만 리턴
+        }
     }
 
     /*───────────────────────────┐
@@ -179,50 +224,39 @@ public class ChristofidesAlgorithm {
      *
      * Complexity:   O(N³)  time,  O(N²)  memory (dense).
      */
+    @FunctionalInterface
+    interface WeightFn { double w(int i, int j); }
+
     static class WeightedBlossom {
-        /*──────── Core fields ────────*/
-        private final int N;                 // must be even
-        private final double[][] W;          // weight matrix
-        private final int[] mate;            // mate[v]  – matched vertex or -1
-        private final int[] label;           // -1: inactive , 0: outer , 1: inner
-        private final int[] parent;          // BFS tree parent
-        private final int[] base;            // base vertex of blossom containing v
-        private final boolean[] inq;         // in queue?
-        private final boolean[] blossom;     // marked vertices in current blossom
-        private final boolean[] seen;        // temp array for LCA
-        private final int[] Q;               // BFS queue
-        private int qh, qt;                  // queue head / tail
-    
-        private final double[] dual;         // dual variable y[v]
-        private static final double INF = 1e100;
-        private static final double EPS = 1e-7;
-    
-        /*──────── Init ────────*/
-        WeightedBlossom(double[][] w) {
-            N = w.length;
-            if ((N & 1) == 1) throw new IllegalArgumentException("Vertex count must be even");
-            W = w;
-            mate   = new int[N]; Arrays.fill(mate, -1);
-            label  = new int[N];
-            parent = new int[N];
-            base   = new int[N];
-            inq    = new boolean[N];
-            blossom= new boolean[N];
-            seen   = new boolean[N];
-            Q      = new int[N];
-            dual   = new double[N];
+        /*── Core fields ──*/
+        private final int N;
+        private final WeightFn W;          // ← 함수로 대체
+        private final int[] mate, label, parent, base, Q;
+        private final boolean[] inq, blossom, seen;
+        private final double[] dual;
+        private static final double INF = 1e100, EPS = 1e-7;
+        private int qh, qt;
+
+        /*── Init ──*/
+        WeightedBlossom(int n, WeightFn w) {
+            N = n;  W = w;
+            if ((N & 1) == 1) throw new IllegalArgumentException("N must be even");
+            mate = new int[N]; Arrays.fill(mate, -1);
+            label = new int[N]; parent = new int[N]; base = new int[N];
+            inq = new boolean[N]; blossom = new boolean[N]; seen = new boolean[N];
+            Q = new int[N];   dual = new double[N];
             for (int i = 0; i < N; i++) dual[i] = minIncident(i);
         }
-    
-        /*──────── Helpers ────────*/
-        private double minIncident(int v) {
+
+        /*── Helpers ──*/
+        private double minIncident(int v){
             double m = INF;
-            for (int u = 0; u < N; u++) if (u != v) m = Math.min(m, W[v][u]);
+            for (int u = 0; u < N; u++) if (u != v) m = Math.min(m, W.w(v,u));
             return m;
         }
-        private double redCost(int u, int v) { return W[u][v] - dual[u] - dual[v]; }
-        private boolean tight(int u, int v) { return Math.abs(redCost(u, v)) < EPS; }
-        private void enqueue(int v, int lbl) { Q[qt++] = v; inq[v] = true; label[v] = lbl; }
+        private double redCost(int u,int v){ return W.w(u,v) - dual[u] - dual[v]; }
+        private boolean tight(int u,int v){ return Math.abs(redCost(u,v)) < EPS; }
+        private void enqueue(int v){ Q[qt++] = v; inq[v] = true; label[v] = 0; }
     
         /*──────── Find Lowest Common Ancestor (of blossoms) ────────*/
         private int lca(int x, int y) {
@@ -256,7 +290,7 @@ public class ChristofidesAlgorithm {
             for (int i = 0; i < N; i++) if (blossom[base[i]]) {
                 base[i] = b;
                 parent[i] = -1; // reset parent
-                if (!inq[i]) enqueue(i, 0);
+                if (!inq[i]) enqueue(i);
             }
         }
     
@@ -271,28 +305,20 @@ public class ChristofidesAlgorithm {
             }
         }
     
-        /*──────── BFS to find augmenting path using only tight edges ────────*/
-        private boolean bfs(int root) {
-            Arrays.fill(label, -1);
-            Arrays.fill(parent, -1);
-            for (int i = 0; i < N; i++) base[i] = i;
-            qh = qt = 0;
-            Arrays.fill(inq, false);
-            enqueue(root, 0);
-            while (qh < qt) {
-                int v = Q[qh++];
-                for (int u = 0; u < N; u++) if (u != v && base[v] != base[u] && mate[v] != u && tight(v, u)) {
-                    if (label[u] == -1) { // unreached vertex
-                        label[u] = 1; parent[u] = v;
-                        if (mate[u] == -1) { // found augmenting path
-                            augmentPath(u);
-                            return true;
-                        }
-                        label[mate[u]] = 0;
-                        enqueue(mate[u], 0);
-                    } else if (label[u] == 0) { // both vertices in outer layer → blossom
-                        contract(v, u);
-                    }
+        /*── BFS ──*/
+        private boolean bfs(int root){
+            Arrays.fill(label,-1); Arrays.fill(parent,-1);
+            for(int i=0;i<N;i++) base[i]=i;
+            qh=qt=0; Arrays.fill(inq,false);
+            enqueue(root);
+            while(qh<qt){
+                int v=Q[qh++];
+                for(int u=0;u<N;u++) if(u!=v&&base[v]!=base[u]&&mate[v]!=u&&tight(v,u)){
+                    if(label[u]==-1){
+                        label[u]=1; parent[u]=v;
+                        if(mate[u]==-1){ augmentPath(u); return true; }
+                        label[mate[u]]=0; enqueue(mate[u]);
+                    }else if(label[u]==0){ contract(v,u); }
                 }
             }
             return false;
